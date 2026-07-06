@@ -38,7 +38,9 @@ def random_observable():   # generate a random observable by random vector * blo
 
     return v[0]*sx + v[1]*sy + v[2]*sz
 
-def generate_sigma(alpha, w):
+
+
+def generate_psi(alpha):
     # Alice qubit
     ket_0_a = basis(2,0)
     ket_1_a = basis(2,1)
@@ -56,21 +58,30 @@ def generate_sigma(alpha, w):
 
     psi = (np.sqrt(alpha)*tensor(ket_0_a, ket_1_B) +
            np.sqrt(1-alpha)*tensor(ket_1_a, ket_0_B))
+    
+    return psi
 
+def generate_qstate(alpha, w, type='rho'):
+    psi = generate_psi(alpha)
     rho_ent = ket2dm(psi)  # |psi><psi| density matrix
 
-    # noise = tensor(qeye(2), ket2dm(ket_0_B))   # I/4 but embedded
-    noise = tensor(qeye(2)/2, ket2dm(ket_0_B))   # I/4 but embedded
+    ket_0_a = basis(2,0)
+    ket_0_b = basis(2,0)
+    ket_0_B = tensor(ket_0_b, ket_0_b)
 
+    if type=='rho':
+        noise = tensor(ket2dm(ket_0_a), ket2dm(ket_0_B))
+    else: # 'sigma'
+        noise = tensor(qeye(2)/2, ket2dm(ket_0_B))   # I/4 but embedded
 
-    sigma = w*rho_ent + (1-w)*noise
+    qstate = w*rho_ent + (1-w)*noise
 
     U_BC = rand_unitary(4)
     U_full = tensor(qeye(2), U_BC)
     
-    U_full.dims = sigma.dims  # U_full should be [[2, 2, 2], [2, 2, 2]]
+    U_full.dims = qstate.dims  # U_full should be [[2, 2, 2], [2, 2, 2]]
     
-    return U_full * sigma * U_full.dag()
+    return U_full * qstate * U_full.dag()
 
 
 
@@ -127,14 +138,16 @@ def evaluate_inequality_15(qstate, A0, A1, B0, C1, C3):
     return np.real(val)
 
 
-def run_seesaw(alpha, w, num_seeds=10, tolerance=1e-6):
+def run_seesaw(alpha, w, num_seeds=1, tolerance=1e-6):
     I2 = qeye(2)
     global_max_violation = 0.0
+
+    state_type = 'sigma'
 
     for _ in range(num_seeds):
         tolerance = 1e-6
 
-        qstate = generate_sigma(alpha=alpha, w=w)
+        qstate = generate_qstate(alpha=alpha, w=w, type=state_type)
         # print("trace =", qstate.tr())
         # print("dims=", qstate.dims)
         # print(
@@ -238,13 +251,14 @@ def run_seesaw(alpha, w, num_seeds=10, tolerance=1e-6):
         if current_score > global_max_violation:
             global_max_violation = current_score
   
-    print(f"For w={w} and alpha={alpha}, best found violation: {global_max_violation:.5f}")
+    print(f"For state {state_type} and parameters w={w}, alpha={alpha}, best found violation is: {global_max_violation:.5f}")
+    print(f"Converged to this score in {iteration} iterations.")
 
     return global_max_violation
 
 
 
-# run_seesaw(alpha=0.5, w=1)     # 1 run of seesaw
+run_seesaw(alpha=0.5, w=1)     # 1 run of seesaw
 
 
 # import numpy as np
@@ -265,47 +279,47 @@ def run_seesaw(alpha, w, num_seeds=10, tolerance=1e-6):
 
 
 
-def compute_critical_curve(alpha_values, w_values):
+# def compute_critical_curve(alpha_values, w_values):
 
-    critical_w = []
+#     critical_w = []
 
-    for alpha in alpha_values:
+#     for alpha in alpha_values:
 
-        print(f"alpha = {alpha:.3f}")
+#         print(f"alpha = {alpha:.3f}")
 
-        wc = np.nan
+#         wc = np.nan
 
-        for w in w_values:
+#         for w in w_values:
 
-            score = run_seesaw(alpha, w)
+#             score = run_seesaw(alpha, w)
 
-            if score > 2.0:
-                wc = w
-                break
+#             if score > 2.0:
+#                 wc = w
+#                 break
 
-        critical_w.append(wc)
+#         critical_w.append(wc)
 
-    return np.array(critical_w)
+#     return np.array(critical_w)
 
 
-alphas = np.linspace(0.5,1.0,26)
-weights = np.linspace(0.0,1.0,201)
+# alphas = np.linspace(0.5,1.0,26)
+# weights = np.linspace(0.0,1.0,201)
 
-critical = compute_critical_curve(alphas, weights)
+# critical = compute_critical_curve(alphas, weights)
 
-plt.figure(figsize=(7,5))
+# plt.figure(figsize=(7,5))
 
-plt.plot(
-    alphas,
-    critical,
-    'ro-',
-    label="Inequality (15)"
-)
+# plt.plot(
+#     alphas,
+#     critical,
+#     'ro-',
+#     label="Inequality (15)"
+# )
 
-plt.xlabel(r"$\alpha$")
-plt.ylabel(r"$w_c$")
-plt.title("Critical visibility for inequality (15)")
-plt.grid(True)
-plt.legend()
+# plt.xlabel(r"$\alpha$")
+# plt.ylabel(r"$w_c$")
+# plt.title("Critical visibility for inequality (15)")
+# plt.grid(True)
+# plt.legend()
 
-plt.show()
+# plt.show()
