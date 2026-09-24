@@ -81,7 +81,9 @@ for strategy in deterministic_strategies:
                     ]
 
 
-    vector = [a0, a1, c0, c1, b0, b1, b2]
+    # vector = [a0, a1, c0, c1, b0, b1, b2]
+    vector = [a0, a1, b0, b1, b2, c0, c1]
+
     for v in joint_variables:
         v_elements = v.split(' ')
 
@@ -109,28 +111,65 @@ def test_behaviour(b_target):
     p = cp.Variable(128, nonneg=True)   # Condition 2: p_i >= 0 is handled by nonneg=True
 
     constraints = [
-        V @ p == b_target,  # Condition 1: sum(p_i * v_i) = b_target
-        cp.sum(p) == 1      # Condition 3: sum(p_i) = 1
+        V @ p <= b_target,  # Condition 1: sum(p_i * v_i) = b_target
+        cp.sum(p) <= 1      # Condition 3: sum(p_i) = 1
     ]
 
-    objective = cp.Minimize(0)  # a dummy objective
+    # objective = cp.Minimize(0)  # a dummy objective
+    objective = cp.Maximize(cp.sum(p))  
+
 
     problem = cp.Problem(objective, constraints)
     problem.solve()
 
-    if problem.status == cp.OPTIMAL:
+    q = problem.value
+
+    if q >= 1 - 1e-6:
         print("Result: LOCAL")
         print("The behavior can be simulated by classical deterministic strategies.")
-        # specific weights with: print(np.round(p.value, 4))
-
-    elif problem.status in [cp.INFEASIBLE, cp.INFEASIBLE_INACCURATE]:
-        print("Result: NON-LOCAL")
+    else:
+        print(f"Result: NON-LOCAL  (local content q = {q:.4f})")
         print("No classical convex combination exists. This behavior violates a Bell inequality.")
 
-    else:
-        print(f"Solver failed. Status: {problem.status}")   
+        
+    # if problem.status == cp.OPTIMAL:
+    #     print("Result: LOCAL")
+    #     print("The behavior can be simulated by classical deterministic strategies.")
+    #     # specific weights with: print(np.round(p.value, 4))
+
+    # elif problem.status in [cp.INFEASIBLE, cp.INFEASIBLE_INACCURATE]:
+    #     print("Result: NON-LOCAL")
+    #     print("No classical convex combination exists. This behavior violates a Bell inequality.")
+
+    # else:
+    #     print(f"Solver failed. Status: {problem.status}")   
+
+
+
+def dual(local_vertices, b):
+    s = cp.Variable(53)
+    V = np.array(local_vertices)
+
+    problem = cp.Problem(cp.Maximize(s @ b), [V @ s <= 1])
+    problem.solve(solver=cp.HIGHS)
+
+    # problem.value > 1 means b is non-local, and s.value . x <= 1 is a Bell inequality it violates
+
+    return problem.value>1, s.value
+
+
+
+
+
 
 
 
 b = np.ones(53)
 test_behaviour(b)
+
+is_nonlocal, inequality_coeffs = dual(local_vertices, b)
+print(f'the given be is nonlocal: {is_nonlocal}')
+
+if is_nonlocal:
+    print(inequality_coeffs)
+
