@@ -40,74 +40,58 @@ def random_observable():   # generate a random observable by random vector * blo
 
 
 
-def generate_psi(alpha):
-    # Alice qubit
-    ket_0_a = basis(2,0)
-    ket_1_a = basis(2,1)
+def generate_psi(state_type):
+    # Alice/Charlie qubits
+    ket_0 = basis(2,0)
+    ket_1 = basis(2,1)
 
-    # "virtual" Bob qubits (since we split original Bob and add "virtual" Bob and Charlie)
-    ket_0_b = basis(2,0)
-    ket_1_b = basis(2,1)
-
-    # embedding to include additional Charlie!!
-    # |0> -> |00>
-    # |1> -> |10>
-
-    ket_0_B = tensor(ket_0_b, ket_0_b)
-    ket_1_B = tensor(ket_1_b, ket_0_b)
-
-    psi = (np.sqrt(alpha)*tensor(ket_0_a, ket_1_B) +
-           np.sqrt(1-alpha)*tensor(ket_1_a, ket_0_B))
+    # Bob's 2-qubit embedded basis states: |0> -> |00>, |1> -> |10>
+    ket_0_B = tensor(ket_0, ket_0)
+    ket_1_B = tensor(ket_1, ket_0)
+    if state_type == 'ghz':
+        # |GHZ(alpha)> = sqrt(alpha)|0>|00>|0> + sqrt(1-alpha)|1>|10>|1> ---- do we need this??
+        # |GHZ> = 1/sqrt(2)|0>|00>|0> + 1/sqrt(2)|1>|10>|1>
+        psi = 1/np.sqrt(2)*(tensor(ket_0, ket_0_B, ket_0) + tensor(ket_1, ket_1_B, ket_1))
+        
+    else: ## 'W'
+        # |W> = 1/sqrt(3) * (|1>|00>|0> + |0>|10>|0> + |0>|00>|1>)
+        psi = 1/np.sqrt(3)*(tensor(ket_1, ket_0_B, ket_0) + 
+                            tensor(ket_0, ket_1_B, ket_0) + 
+                            tensor(ket_0, ket_0_B, ket_1))
     
     return psi
 
-def generate_qstate(alpha, w, type='rho'):
-    psi = generate_psi(alpha)
+def generate_qstate(w, state_type='ghz'):
+    psi = generate_psi(state_type)
     rho_ent = ket2dm(psi)  # |psi><psi| density matrix
 
-    ket_0_a = basis(2,0)
-    ket_0_b = basis(2,0)
-    ket_0_B = tensor(ket_0_b, ket_0_b)
+    ket_0 = basis(2, 0)
+    I2 = qeye(2)
 
-    if type=='rho':
-        noise = tensor(ket2dm(ket_0_a), ket2dm(ket_0_B))
-    else: # 'sigma'
-        noise = tensor(qeye(2)/2, ket2dm(ket_0_B))   # I/4 but embedded
-
+    # I/2 on Alice, I/2 on Bob_1, |0><0| on Bob_2, I/2 on Charlie
+    noise = tensor(I2 / 2, I2 / 2, ket2dm(ket_0), I2 / 2)
     qstate = w*rho_ent + (1-w)*noise
 
-    U_BC = rand_unitary(4)
-    U_full = tensor(qeye(2), U_BC)
+    U_B = rand_unitary(4)
+    U_full = tensor(I2, U_B, I2)
     
-    U_full.dims = qstate.dims  # U_full should be [[2, 2, 2], [2, 2, 2]]
+    U_full.dims = qstate.dims  # U_full should be [[2, 2, 2, 2], [2, 2, 2, 2]]
     
     return U_full * qstate * U_full.dag()
 
 
 
-def term(coeff, op0, op1, op2, target_slot, sigma):  # coefficient (c_xy ^ab) * Partial Trace(sigma * op0 op1 op2)
-    full_op = tensor(op0, op1, op2)
-    # traced_out = (sigma * full_op).ptrace(target_slot)
-    traced_out = (full_op * sigma).ptrace(target_slot)
-    return coeff * traced_out
-
-
-def update_povm(M, dim=2):   # build Q+ from positive eigenvectors of rho+ - rho-  (M)
-    eigenvalues, eigenvectors = np.linalg.eigh(M.full())
-    Q_plus_mat = np.zeros((dim, dim), dtype=complex)
-    
-    #   Sum outer products of eigenvectors that have a positive eigenvalue
-    for val, vec in zip(eigenvalues, eigenvectors.T):
-        if val > 0:
-            Q_plus_mat += np.outer(vec, vec.conj())
-            
-    Q_plus = Qobj(Q_plus_mat)
-    Q_minus = qeye(dim) - Q_plus
-    return [Q_plus, Q_minus], (Q_plus - Q_minus)  # Returns new POVM list and Observable
+# def term(coeff, op0, op1, op2, op3, target_slot, state):  # coefficient (c_xy ^ab) * Partial Trace(sigma * op0 op1 op2)
+#     full_op = tensor(op0, op1, op2, op3)
+#     # traced_out = (sigma * full_op).ptrace(target_slot)
+#     traced_out = (full_op * state).ptrace(target_slot)
+#     return coeff * traced_out
 
 
 def update_observable(M, dim=2):
-    vals, vecs = np.linalg.eigh(M.full())
+    # Enforce Hermiticity to wipe out any 1e-17 floating-point artifacts
+    M_herm = 0.5 * (M + M.dag())
+    vals, vecs = np.linalg.eigh(M_herm.full())
 
     # vals sorted ascending by eigenvalues, force lower -> -1, upper -> +1
     proj_minus = np.outer(vecs[:, 0], vecs[:, 0].conj())
@@ -117,74 +101,99 @@ def update_observable(M, dim=2):
     return Qobj(observable)
 
 
-def evaluate_inequality_15(qstate, A0, A1, B0, C1, C3):
+def updated_qstate(op, qstate, A0, A1, X0, X2, Y1, C0, C1):
     I2 = qeye(2)
+    ops = [I2, I2, I2, I2]  # [Alice, Bob_1, Bob_2, Charlie]
+
+    # Alice (Slot 0)
+    if 'A0' in op:
+        ops[0] = A0
+    elif 'A1' in op:
+        ops[0] = A1
+
+    # Bob Virtual 1 (Slot 1)
+    if 'B0' in op:
+        ops[1] = X0
+    elif 'B2' in op:
+        ops[1] = X2
+
+    # Bob Virtual 2 (Slot 2)
+    if 'B1' in op:
+        ops[2] = Y1
+
+    # Charlie (Slot 3)
+    if 'C0' in op:
+        ops[3] = C0
+    elif 'C1' in op:
+        ops[3] = C1
+
+
+    full_op = tensor(ops)
+    return (qstate * full_op).tr()
+
+
+def evaluate_inequality(qstate, inequality, A0, A1, X0, X2, Y1, C0, C1):    #inequality given as [(operator, coefficient)]
     val = 0.0
-    val += 2.0 * (qstate * tensor(I2, B0, I2)).tr()
-    val += 1.0 * (qstate * tensor(A0, I2, C1)).tr()
-    val += 1.0 * (qstate * tensor(A0, I2, C3)).tr()
-    val += 1.0 * (qstate * tensor(A1, I2, C1)).tr()
-    val -= 1.0 * (qstate * tensor(A1, I2, C3)).tr()
-    val -= 1.0 * (qstate * tensor(A0, B0, C1)).tr()
-    
-    val -= 1.0 * (qstate * tensor(A0, B0, C3)).tr()
-    # val -= 1.0 * (qstate * tensor(A0, C3, B0)).tr()
 
-    val -= 1.0 * (qstate * tensor(A1, B0, C1)).tr()
-
-    val += 1.0 * (qstate * tensor(A1, B0, C3)).tr()
-    # val += 1.0 * (qstate * tensor(A1, C3, B0)).tr()
+    for (op, coeff) in inequality:
+        val += coeff * updated_qstate(op, qstate, A0, A1, X0, X2, Y1, C0, C1)
 
     return np.real(val)
 
 
-def run_seesaw(alpha, w, num_seeds=1, tolerance=1e-6):
+
+def get_environment_matrix(target_obs_name, target_slot, inequality, qstate, A0, A1, X0, X2, Y1, C0, C1):
+    I2 = qeye(2)
+    M = Qobj(np.zeros((2, 2)), dims=[[2], [2]])
+
+    for op, coeff in inequality:
+        if target_obs_name in op:
+            ops = [I2, I2, I2, I2]
+
+            # Alice (Slot 0)
+            if 'A0' in op: ops[0] = A0
+            elif 'A1' in op: ops[0] = A1
+
+            # Bob v1 (Slot 1)
+            if 'B0' in op: ops[1] = X0
+            elif 'B2' in op: ops[1] = X2
+
+            # Bob v2 (Slot 2)
+            if 'B1' in op: ops[2] = Y1
+
+            # Charlie (Slot 3)
+            if 'C0' in op: ops[3] = C0
+            elif 'C1' in op: ops[3] = C1
+
+            # Replace target observable with identity I2!
+            ops[target_slot] = I2
+
+            full_op = tensor(ops)
+            # Trace out the other 3 subsystems, keeping only target_slot
+            M += coeff * (full_op * qstate).ptrace(target_slot)
+
+    return M
+
+def run_seesaw(inequality, state_type, w, num_seeds=500, tolerance=1e-6, verbose=False):
     I2 = qeye(2)
     global_max_violation = 0.0
 
-    state_type = 'sigma'
 
     for _ in range(num_seeds):
         tolerance = 1e-6
 
-        qstate = generate_qstate(alpha=alpha, w=w, type=state_type)
-        # print("trace =", qstate.tr())
-        # print("dims=", qstate.dims)
-        # print(
-        #     evaluate_inequality_15(
-        #     qstate,
-        #     qeye(2),
-        #     qeye(2),
-        #     qeye(2),
-        #     qeye(2),
-        #     qeye(2)
-        #     )
-        #     )
-
-        # random 2D POVMs for the 3 parties
-        # P_A = [generate_random_POVMs(dim=2) for _ in range(2)]  # A0, A1
-        # P_B = [generate_random_POVMs(dim=2) for _ in range(2)]  # B0
-        # P_C = [generate_random_POVMs(dim=2) for _ in range(2)]  # C1, C3
-
-        # # Convert to initial Observables):
-        # A0, A1 = (
-        #     P_A[0][0] - P_A[0][1],
-        #     P_A[1][0] - P_A[1][1],
-        # )
-        # B0 = P_B[0][0] - P_B[0][1]   # we skip B1 here
-        # C1, C3 = (
-        #     P_C[0][0] - P_C[0][1],
-        #     P_C[1][0] - P_C[1][1],
-        # )
-
+        qstate = generate_qstate(w, state_type)
         A0 = random_observable()
         A1 = random_observable()
-        B0 = random_observable()
+        X0 = random_observable()
+        X2 = random_observable()
+        Y1 = random_observable()
+        C0 = random_observable()
         C1 = random_observable()
-        C3 = random_observable()
 
 
-        current_score = evaluate_inequality_15(qstate, A0, A1, B0, C1, C3)
+        current_score = evaluate_inequality(qstate, inequality, A0, A1, X0, X2, Y1, C0, C1)
+  
         print("Initial score =", current_score)
         previous_score = -10.0
 
@@ -194,132 +203,92 @@ def run_seesaw(alpha, w, num_seeds=1, tolerance=1e-6):
             iteration += 1
             previous_score = current_score
 
-            # --- OPTIMIZE ALICE (tracing out A0, A1 i.e. target dlot=0) ---
-            rho_plus_A0 = term(1.0, I2, I2, C1, 0, qstate)
-            rho_plus_A0 += term(1.0, I2, I2, C3, 0, qstate)
-            rho_plus_A0 += term(-1.0, I2, B0, C1, 0, qstate)
-            rho_plus_A0 += term(-1.0, I2, B0, C3, 0, qstate)
-            print("A0:", rho_plus_A0.eigenenergies())
-            # P_A[0], A0 = update_povm(2.0 * rho_plus_A0)
-            A0 = update_observable(2.0 * rho_plus_A0)
+            # --- 1. OPTIMIZE ALICE (Target slot = 0) ---
+            M_A0 = get_environment_matrix('A0', 0, inequality, qstate, A0, A1, X0, X2, Y1, C0, C1)
+            A0 = update_observable(M_A0)
+            M_A1 = get_environment_matrix('A1', 0, inequality, qstate, A0, A1, X0, X2, Y1, C0, C1)
+            A1 = update_observable(M_A1)
 
-            rho_plus_A1 = term(1.0, I2, I2, C1, 0, qstate)
-            rho_plus_A1 += term(-1.0, I2, I2, C3, 0, qstate)
-            rho_plus_A1 += term(-1.0, I2, B0, C1, 0, qstate)
-            rho_plus_A1 += term(1.0, I2, B0, C3, 0, qstate)
-            print("A1:", rho_plus_A1.eigenenergies())
-            # P_A[1], A1 = update_povm(2.0 * rho_plus_A1)
-            A1 = update_observable(2.0 * rho_plus_A1)
+            # --- 2. OPTIMIZE BOB VIRTUAL 1 (Target slot = 1) ---
+            M_X0 = get_environment_matrix('B0', 1, inequality, qstate, A0, A1, X0, X2, Y1, C0, C1)
+            X0 = update_observable(M_X0)
 
+            M_X2 = get_environment_matrix('B2', 1, inequality, qstate, A0, A1, X0, X2, Y1, C0, C1)
+            X2 = update_observable(M_X2)
 
+            # --- 3. OPTIMIZE BOB VIRTUAL 2 (Target slot = 2) ---
+            M_Y1 = get_environment_matrix('B1', 2, inequality, qstate, A0, A1, X0, X2, Y1, C0, C1)
+            Y1 = update_observable(M_Y1)
 
-            # --- OPTIMIZE CHARLIE (tracing out C1, C3 i.e. target slot=2)
-            rho_plus_C1 = term(1.0, A0, I2, I2, 2, qstate)
-            rho_plus_C1 += term(1.0, A1, I2, I2, 2, qstate)
-            rho_plus_C1 += term(-1.0, A0, B0, I2, 2, qstate)
-            rho_plus_C1 += term(-1.0, A1, B0, I2, 2, qstate)
-            print("C1:", rho_plus_C1.eigenenergies())
-            # P_C[0], C1 = update_povm(2.0 * rho_plus_C1)
-            C1 = update_observable(2.0 * rho_plus_C1)
+            # --- 4. OPTIMIZE CHARLIE (Target slot = 3) ---
+            M_C0 = get_environment_matrix('C0', 3, inequality, qstate, A0, A1, X0, X2, Y1, C0, C1)
+            C0 = update_observable(M_C0)
 
-
-            rho_plus_C3 = term(1.0, A0, I2, I2, 2, qstate)
-            rho_plus_C3 += term(-1.0, A1, I2, I2, 2, qstate)
-            rho_plus_C3 += term(-1.0, A0, B0, I2, 2, qstate)
-            rho_plus_C3 += term(1.0, A1, B0, I2, 2, qstate)
-            print("C3:", rho_plus_C3.eigenenergies())
-            # P_C[1], C3 = update_povm(2.0 * rho_plus_C3)
-            C3 = update_observable(2.0 * rho_plus_C3)
-
-            # --- OPTIMIZE BOB (tracing out B0 i.e. target slot=1)
-            rho_plus_B0 = term(2.0, I2, I2, I2, 1, qstate)
-            rho_plus_B0 += term(-1.0, A0, I2, C1, 1, qstate)
-            rho_plus_B0 += term(-1.0, A0, I2, C3, 1, qstate)
-            rho_plus_B0 += term(-1.0, A1, I2, C1, 1, qstate)
-            rho_plus_B0 += term(1.0, A1, I2, C3, 1, qstate)
-
-            # P_B[0], B0 = update_povm(2.0 * rho_plus_B0)
-            B0 = update_observable(2.0 * rho_plus_B0)
-
-            print(B0.eigenenergies())
-        
-
-            current_score = evaluate_inequality_15(qstate, A0, A1, B0, C1, C3)
+            M_C1 = get_environment_matrix('C1', 3, inequality, qstate, A0, A1, X0, X2, Y1, C0, C1)
+            C1 = update_observable(M_C1)          
+            
+            current_score = evaluate_inequality(qstate, inequality, A0, A1, X0, X2, Y1, C0, C1)
             print(iteration, current_score)
-        # print(f"Seed {seed + 1} Converged Score: {current_score:.5f}")
 
         if current_score > global_max_violation:
             global_max_violation = current_score
   
-    print(f"For state {state_type} and parameters w={w}, alpha={alpha}, best found violation is: {global_max_violation:.5f}")
+    print(f"For parameter w={w}, best found violation is: {global_max_violation:.5f}")
     print(f"Converged to this score in {iteration} iterations.")
 
     return global_max_violation
 
 
 
-run_seesaw(alpha=0.5, w=1)     # 1 run of seesaw
+
+if __name__ == "__main__":
+    CORRELATOR_NAMES = [
+        'A0', 'A1', 'B0', 'B1', 'B2', 'C0', 'C1',
+        'B0B1', 'B1B2', 'A0B0', 'A0B1', 'A0B2', 'A1B0', 'A1B1', 'A1B2',
+        'B0C0', 'B1C0', 'B2C0', 'B0C1', 'B1C1', 'B2C1',
+        'A0C0', 'A0C1', 'A1C0', 'A1C1',
+        'A0B0C0', 'A0B0C1', 'A0B1C0', 'A0B1C1', 'A0B2C0', 'A0B2C1',
+        'A1B0C0', 'A1B0C1', 'A1B1C0', 'A1B1C1', 'A1B2C0', 'A1B2C1',
+        'A0B0B1', 'A1B0B1', 'A0B1B2', 'A1B1B2',
+        'B0B1C0', 'B0B1C1', 'B1B2C0', 'B1B2C1',
+        'A0B0B1C0', 'A0B0B1C1', 'A0B1B2C0', 'A0B1B2C1',
+        'A1B0B1C0', 'A1B0B1C1', 'A1B1B2C0', 'A1B1B2C1'
+    ]
+
+    raw_ineqs = np.load("bell_inequalities_53D.npy")
+    # Extract the 42 unique inequalities
+    unique_ineqs = np.unique(np.round(raw_ineqs, 6), axis=0)
+    # Convert all 42 inequalities to [(op, coeff), ...]
+    all_inequalities = [
+        [(name, ineq[i]) for i, name in enumerate(CORRELATOR_NAMES) if abs(ineq[i]) > 1e-6]
+        for ineq in unique_ineqs
+    ]
+
+    state = 'ghz'
+    w = 0.51  
+    seeds = 10        # 10 random seeds per inequality
+    print(f"Testing {len(all_inequalities)} genuine Bell inequalities for {state.upper()} state at w={w}...\n")
+
+    results = []
+    for idx, ineq in enumerate(all_inequalities):
+        num_terms = len(ineq)
+        score = run_seesaw(ineq, state_type=state, w=w, num_seeds=seeds, verbose=False)
+        is_violated = score > 1.0
+        results.append((idx + 1, num_terms, score, is_violated))
+        
+        status = "VIOLATED! ***" if is_violated else "No violation"
+        print(f"Inequality #{idx + 1:2d} ({num_terms:2d} terms) -> Max Score: {score:.5f} [{status}]")
 
 
-# import numpy as np
+    # --- Print Summary Table ---
+    print("\n" + "=" * 55)
+    print(f"{'Ineq #':<8} {'Terms':<8} {'Score (w={})':<18} {'Violated?':<12}")
+    print("=" * 55)
+    for ineq_num, terms, score, violated in results:
+        v_str = "YES" if violated else "No"
+        print(f"{ineq_num:<8} {terms:<8} {score:<18.5f} {v_str:<12}")
+    print("=" * 55)
+    violated_count = sum(1 for r in results if r[3])
+    print(f"\nTotal violated: {violated_count} / {len(all_inequalities)}")
 
-# alphas = np.linspace(0.0, 1.0, 101)
-# omegas = np.linspace(0.0, 1.0, 101)
-
-# scores = np.zeros((len(alphas), len(omegas)))
-
-# for i, alpha in enumerate(alphas):
-#     print(f"alpha = {alpha:.2f}")
-
-#     for j, w in enumerate(omegas):
-#         scores[i, j] = run_seesaw(alpha=alpha, w=w)
-
-# plot_different_values(alphas, omegas, scores)
-
-
-
-
-# def compute_critical_curve(alpha_values, w_values):
-
-#     critical_w = []
-
-#     for alpha in alpha_values:
-
-#         print(f"alpha = {alpha:.3f}")
-
-#         wc = np.nan
-
-#         for w in w_values:
-
-#             score = run_seesaw(alpha, w)
-
-#             if score > 2.0:
-#                 wc = w
-#                 break
-
-#         critical_w.append(wc)
-
-#     return np.array(critical_w)
-
-
-# alphas = np.linspace(0.5,1.0,26)
-# weights = np.linspace(0.0,1.0,201)
-
-# critical = compute_critical_curve(alphas, weights)
-
-# plt.figure(figsize=(7,5))
-
-# plt.plot(
-#     alphas,
-#     critical,
-#     'ro-',
-#     label="Inequality (15)"
-# )
-
-# plt.xlabel(r"$\alpha$")
-# plt.ylabel(r"$w_c$")
-# plt.title("Critical visibility for inequality (15)")
-# plt.grid(True)
-# plt.legend()
-
-# plt.show()
+  
