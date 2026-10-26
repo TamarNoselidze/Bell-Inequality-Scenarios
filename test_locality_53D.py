@@ -146,30 +146,49 @@ def test_behaviour(b_target):
 
 
 
-def dual(local_vertices, b):
+def dual(V, b):
     s = cp.Variable(53)
-    V = np.array(local_vertices)
+    # V = np.array(local_vertices)
+
+    # V2 = V + np.ones_like(V)
+    # b1 = b + np.ones_like(b)
+    # problem = cp.Problem(cp.Maximize(s @ b2), [V2 @ s <= 1])
 
     problem = cp.Problem(cp.Maximize(s @ b), [V @ s <= 1])
     problem.solve(solver=cp.HIGHS)
 
     # problem.value > 1 means b is non-local, and s.value . x <= 1 is a Bell inequality it violates
 
-    return problem.value>1, s.value
+    return problem.value>1.0 + 1e-6, s.value
 
 
 
+def parse_panda_line(line_numbers):
+    k = line_numbers[0]
+    coords = np.array(line_numbers[1:], dtype=float)
+    if k > 0:
+        return coords / k  # Vertex: normalize by denominator
+    else:
+        return coords      # ??? what to do here    
 
 
+inequalities = []
 
+with open("scenario_53D_13sym.poi") as file:
+    # for line in file:
+    for idx, line in enumerate(file):
+        b_str = line.split()
+        # print(b_str)
+        b_padded = [int(x) for x in b_str]
+        # print(b_padded)
+        b = parse_panda_line(b_padded)
+        # equation = dual(local_vertices, b)
+        # print(equation[1])
+        V = np.array(local_vertices)
+        is_nonlocal, s_val = dual(V, b)
+        if s_val is not None:
+            inequalities.append(s_val)
+            print(f"Class {idx}: solved. Max non-zero coeff: {np.max(np.abs(s_val)):.4f}")
 
-
-b = np.ones(53)
-test_behaviour(b)
-
-is_nonlocal, inequality_coeffs = dual(local_vertices, b)
-print(f'the given be is nonlocal: {is_nonlocal}')
-
-if is_nonlocal:
-    print(inequality_coeffs)
-
+# Save for seesaw
+np.save("bell_inequalities_53D.npy", np.array(inequalities))
