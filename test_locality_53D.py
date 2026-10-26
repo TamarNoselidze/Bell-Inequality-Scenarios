@@ -61,6 +61,8 @@ import itertools
 # <A1B1B2C0>               x52
 # <A1B1B2C1>               x53
 
+import cvxpy as cp
+import numpy as np
 
 
 
@@ -93,18 +95,11 @@ for strategy in deterministic_strategies:
 
         vector.append(joint_value)
 
-
     local_vertices.append(vector)
 
-# print(len(local_vertices[0]))
 
 
-
-import cvxpy as cp
-import numpy as np
-
-
-
+## OLD, not in use now, but has bugs to fix with constraints
 def test_behaviour(b_target):
     V = np.array(local_vertices).T  
 
@@ -132,33 +127,15 @@ def test_behaviour(b_target):
         print("No classical convex combination exists. This behavior violates a Bell inequality.")
 
         
-    # if problem.status == cp.OPTIMAL:
-    #     print("Result: LOCAL")
-    #     print("The behavior can be simulated by classical deterministic strategies.")
-    #     # specific weights with: print(np.round(p.value, 4))
-
-    # elif problem.status in [cp.INFEASIBLE, cp.INFEASIBLE_INACCURATE]:
-    #     print("Result: NON-LOCAL")
-    #     print("No classical convex combination exists. This behavior violates a Bell inequality.")
-
-    # else:
-    #     print(f"Solver failed. Status: {problem.status}")   
-
 
 
 def dual(V, b):
     s = cp.Variable(53)
-    # V = np.array(local_vertices)
-
-    # V2 = V + np.ones_like(V)
-    # b1 = b + np.ones_like(b)
-    # problem = cp.Problem(cp.Maximize(s @ b2), [V2 @ s <= 1])
 
     problem = cp.Problem(cp.Maximize(s @ b), [V @ s <= 1])
     problem.solve(solver=cp.HIGHS)
 
     # problem.value > 1 means b is non-local, and s.value . x <= 1 is a Bell inequality it violates
-
     return problem.value>1.0 + 1e-6, s.value
 
 
@@ -175,15 +152,14 @@ def parse_panda_line(line_numbers):
 inequalities = []
 
 with open("scenario_53D_13sym.poi") as file:
-    # for line in file:
     for idx, line in enumerate(file):
         b_str = line.split()
-        # print(b_str)
         b_padded = [int(x) for x in b_str]
-        # print(b_padded)
         b = parse_panda_line(b_padded)
+    
+        # print(b)
         # equation = dual(local_vertices, b)
-        # print(equation[1])
+     
         V = np.array(local_vertices)
         is_nonlocal, s_val = dual(V, b)
         if s_val is not None:

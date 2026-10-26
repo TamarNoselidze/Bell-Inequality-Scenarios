@@ -1,31 +1,9 @@
 from qutip import *
 import numpy as np
 
-import matplotlib.pyplot as plt
-
-from qutip import *
-import numpy as np
-import scipy
 
 def rand_complex(dim): # random complex matrix
     return np.random.randn(dim, dim) + 1j * np.random.randn(dim, dim)
-
-
-def generate_random_POVMs(dim=2, num_outcomes=2):
-    # M = [Qobj(np.random.rand(4, 4)) for _ in range(4)]
-    M = [Qobj(rand_complex(dim)) for _ in range(num_outcomes)]    
-    
-    H = [M_i@M_i.dag() for M_i in M]
-
-    S = sum(H)
-    # print(S)
-
-    S_inv_sqrt_mat = scipy.linalg.fractional_matrix_power(S.full(), -0.5)
-    S_inv_sqrt = Qobj(S_inv_sqrt_mat)
-
-    # normalize for the final POVM elements: E_i = S^(-1/2) * H_i * S^(-1/2)
-    E = [S_inv_sqrt * H_i * S_inv_sqrt for H_i in H]
-    return E
 
 
 def random_observable():   # generate a random observable by random vector * bloch ops
@@ -61,6 +39,7 @@ def generate_psi(state_type):
     
     return psi
 
+
 def generate_qstate(w, state_type='ghz'):
     psi = generate_psi(state_type)
     rho_ent = ket2dm(psi)  # |psi><psi| density matrix
@@ -81,15 +60,8 @@ def generate_qstate(w, state_type='ghz'):
 
 
 
-# def term(coeff, op0, op1, op2, op3, target_slot, state):  # coefficient (c_xy ^ab) * Partial Trace(sigma * op0 op1 op2)
-#     full_op = tensor(op0, op1, op2, op3)
-#     # traced_out = (sigma * full_op).ptrace(target_slot)
-#     traced_out = (full_op * state).ptrace(target_slot)
-#     return coeff * traced_out
-
-
 def update_observable(M, dim=2):
-    # Enforce Hermiticity to wipe out any 1e-17 floating-point artifacts
+    # Enforce Hermiticity remove 1e-17 floating-point artifacts
     M_herm = 0.5 * (M + M.dag())
     vals, vecs = np.linalg.eigh(M_herm.full())
 
@@ -165,7 +137,7 @@ def get_environment_matrix(target_obs_name, target_slot, inequality, qstate, A0,
             if 'C0' in op: ops[3] = C0
             elif 'C1' in op: ops[3] = C1
 
-            # Replace target observable with identity I2!
+            # Replace target observable with identity
             ops[target_slot] = I2
 
             full_op = tensor(ops)
@@ -174,10 +146,10 @@ def get_environment_matrix(target_obs_name, target_slot, inequality, qstate, A0,
 
     return M
 
+
 def run_seesaw(inequality, state_type, w, num_seeds=500, tolerance=1e-6, verbose=False):
     I2 = qeye(2)
     global_max_violation = 0.0
-
 
     for _ in range(num_seeds):
         tolerance = 1e-6
@@ -258,6 +230,7 @@ if __name__ == "__main__":
     raw_ineqs = np.load("bell_inequalities_53D.npy")
     # Extract the 42 unique inequalities
     unique_ineqs = np.unique(np.round(raw_ineqs, 6), axis=0)
+
     # Convert all 42 inequalities to [(op, coeff), ...]
     all_inequalities = [
         [(name, ineq[i]) for i, name in enumerate(CORRELATOR_NAMES) if abs(ineq[i]) > 1e-6]
@@ -265,7 +238,7 @@ if __name__ == "__main__":
     ]
 
     state = 'ghz'
-    w = 0.51  
+    w = 0.7  
     seeds = 10        # 10 random seeds per inequality
     print(f"Testing {len(all_inequalities)} genuine Bell inequalities for {state.upper()} state at w={w}...\n")
 
@@ -273,7 +246,7 @@ if __name__ == "__main__":
     for idx, ineq in enumerate(all_inequalities):
         num_terms = len(ineq)
         score = run_seesaw(ineq, state_type=state, w=w, num_seeds=seeds, verbose=False)
-        is_violated = score > 1.0
+        is_violated = score > 1.000001   #is this a good fix?
         results.append((idx + 1, num_terms, score, is_violated))
         
         status = "VIOLATED! ***" if is_violated else "No violation"
@@ -282,7 +255,7 @@ if __name__ == "__main__":
 
     # --- Print Summary Table ---
     print("\n" + "=" * 55)
-    print(f"{'Ineq #':<8} {'Terms':<8} {'Score (w={})':<18} {'Violated?':<12}")
+    print(f"{'Ineq #':<8} {'Terms':<8} {'Score (w={w})':<18} {'Violated?':<12}")
     print("=" * 55)
     for ineq_num, terms, score, violated in results:
         v_str = "YES" if violated else "No"
